@@ -1,0 +1,15 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs
+/Tracker.Core/bin/Debug/net8.0
+/Tracker.Core/obj
+/Tracker.Infrastructure/bin/Debug/net8.0
+/Tracker.Infrastructure/obj
+/Tracker.TradeSystem/bin/Debug/net8.0
+/Tracker.TradeSystem/obj
+/.github
+/Tracker.API/bin/Debug/net8.0
+/Tracker.API/obj
+/Tracker.API/App_Data/TrackerTradesSystem_log.ldf
