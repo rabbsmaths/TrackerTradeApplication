@@ -1,4 +1,4 @@
-# Technical Assessment: Trade Management & Reporting System
+# Trade Management & Reporting System
 ---
 
 ## 1. Architectural Overview
