@@ -64,3 +64,17 @@ Because the system interacts with a legacy service, both the API endpoint layer 
 1. Press **F5** (or click the green **Start** arrow on the top toolbar).
 2. Visual Studio 2022 will compile the solution, start the WCF background hosting lifecycle, and launch your browser.
 3. The `Tracker.API` layer exposes interactive **Swagger UI** middleware out-of-the-box. Use the Swagger console interface (`/swagger/index.html`) to pass parameter inputs (`from` and `to` date strings) to verify the database aggregation logic directly from your browser windows.
+
+---
+
+## Step 5 AI Engineering Assistance
+In alignment with modern DevOps and accelerated delivery workflows, generative AI was utilized strictly as an architectural sounding board and code-review assistant. Below are the minimal, highly targeted prompts leveraged during development:
+
+1. **Architecture Validation:**
+   > *"Validate a 3-tier Clean Architecture structure using .NET 8 and a legacy WCF component to ensure strict isolation of the domain layer."*
+   
+2. **EF Core Translation Check:**
+   > *"Verify that an EF Core 8 LINQ GroupBy and Sum expression properly defers execution and aggregates entirely on the SQL Server instance without in-memory evaluation."*
+
+3. **C# 12 Best Practices:**
+   > *"Provide example syntax for C# 12 Primary Constructors specifically for Dependency Injection in an ASP.NET Core Web API controller to minimize boilerplate."*
