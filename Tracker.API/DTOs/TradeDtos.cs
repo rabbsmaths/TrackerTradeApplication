@@ -1,8 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
+﻿namespace Tracker.Api.Dtos;
 
-namespace Tracker.Api.Dtos;
-
+/// <summary>
+/// An immutable data packet carrying raw trade ingestion parameters sent by external clients.
+/// </summary>
 public record CreateTradeDto(
     string external_id,
     string account,
@@ -14,6 +14,9 @@ public record CreateTradeDto(
     string currency
 );
 
+/// <summary>
+/// An immutable reporting row containing normalized, aggregated position metrics.
+/// </summary>
 public record TradeReportRowDto(
     string account,
     string symbol,
@@ -23,6 +26,9 @@ public record TradeReportRowDto(
     string base_ccy
 );
 
+/// <summary>
+/// A structured, read-only wrapper enclosing the complete time-series trade report payload.
+/// </summary>
 public record TradeReportResponseDto(
     DateTime from,
     DateTime to,

@@ -1,5 +1,9 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.EntityFrameworkCore;
+
+using System.Data.Common;
+
 using Tracker.Api.Dtos;
 using Tracker.Core.Entities;
 using Tracker.Core.Interfaces;
@@ -12,7 +16,7 @@ namespace Tracker.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-public class TradesController(AppDbContext db, IEnrichmentService enrichmentService) : ControllerBase
+public class TradesController(AppDbContext db, IEnrichmentService enrichmentService, IConfiguration configuration) : ControllerBase
 {
     /// <summary>
     /// Ingests a single trade from an upstream source, enriches it via legacy SOAP reference data, 
@@ -48,7 +52,7 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
             Currency = dto.currency,
             BaseCurrencyRate = conversionRate,
             NotionalBaseValue = computedNotionalBase,
-            BaseCurrency = "USD"
+            BaseCurrency = configuration["WcfSettings:TargetBaseCurrency"]??"USD"
         };
 
         try
@@ -57,7 +61,10 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
             await db.SaveChangesAsync();
             return Ok(trade);
         }
-        catch (DbUpdateException) // Catches strict concurrent simultaneous thread races 
+        //Catch SPECIFIC unique index constraints (simultaneous double-submissions)
+        catch (DbUpdateException ex)
+            when (ex.InnerException is Microsoft.Data.SqlClient.SqlException sqlEx
+                  && (sqlEx.Number == 2601 || sqlEx.Number == 2627))
         {
             return Ok(new
             {
@@ -65,6 +72,27 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
                 message = $"Simultaneous duplicate injection for Trade '{dto.external_id}' was successfully intercepted at the database relational level. State integrity and system consistency maintained."
             });
         }
+        //Catch ANY OTHER unexpected database failure 
+        catch (DbUpdateException generalDbEx)
+        {
+            return BadRequest(new
+            {
+                status = "DatabaseError",
+                message = "An unexpected database state error occurred while committing the entity timeline.",
+                details = generalDbEx.Message
+            });
+        }
+        //Global Catch-All
+        catch (Exception criticalEx)
+        {
+            return BadRequest(new
+            {
+                status = "CriticalSystemError",
+                message = "An unhandled execution routine collapse occurred within the tracking kernel engine core.",
+                details = criticalEx.Message
+            });
+        }
+
     }
 
     /// <summary>
@@ -75,8 +103,8 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
     /// <returns>An object containing the structured summary matrices grouped cleanly by account and symbol.</returns>
     [HttpGet("report")]
     public async Task<ActionResult<TradeReportResponseDto>> GetReport(
-        [FromQuery] DateTime from,
-        [FromQuery] DateTime to)
+    [FromQuery] DateTime from,
+    [FromQuery] DateTime to)
     {
         if (to < from)
         {
@@ -87,21 +115,46 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
             });
         }
 
-        // SQL Server set-based calculations (Executes wholly within Database Engine)
-        var databaseQuery = db.Trades
-            .Where(t => t.TradeTime >= from && t.TradeTime <= to)
-            .GroupBy(t => new { t.Account, t.Symbol, t.BaseCurrency })
-            .Select(g => new TradeReportRowDto(
-                g.Key.Account,
-                g.Key.Symbol,
-                g.Sum(x => x.Quantity),
-                g.Average(x => x.Price),
-                g.Sum(x => x.NotionalBaseValue),
-                g.Key.BaseCurrency
-            ));
+        try
+        {
+            // SQL Server set-based calculations (Executes wholly within Database Engine)
+            var databaseQuery = db.Trades
+                .Where(t => t.TradeTime >= from && t.TradeTime <= to)
+                .GroupBy(t => new { t.Account, t.Symbol, t.BaseCurrency })
+                .Select(g => new TradeReportRowDto(
+                    g.Key.Account,
+                    g.Key.Symbol,
+                    g.Sum(x => x.Quantity),
+                    g.Average(x => x.Price),
+                    g.Sum(x => x.NotionalBaseValue),
+                    g.Key.BaseCurrency
+                ));
 
-        var rows = await databaseQuery.ToListAsync();
 
-        return Ok(new TradeReportResponseDto(from, to, rows));
+            var rows = await databaseQuery.ToListAsync();
+
+            return Ok(new TradeReportResponseDto(from, to, rows));
+        }
+        //Catch specific data access errors (e.g., deadlocks, connection timeouts)
+        catch (DbException dbEx)
+        {
+            
+            return BadRequest(new
+            {
+                status = "DatabaseQueryError",
+                message = "An error occurred while compiling or executing the analytical calculation matrix within the database server.",
+                details = dbEx.Message
+            });
+        }
+        //Catch-all
+        catch (Exception criticalEx)
+        {
+            return BadRequest(new
+            {
+                status = "CriticalSystemError",
+                message = "An unhandled pipeline crash occurred while preparing the trade report payload.",
+                details = criticalEx.Message
+            });
+        }
     }
 }
