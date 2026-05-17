@@ -13,3 +13,5 @@
 /Tracker.API/bin/Debug/net8.0
 /Tracker.API/obj
 /Tracker.API/App_Data/TrackerTradesSystem_log.ldf
+/Tracker.LegacySoapStub/bin/Debug/net8.0
+/Tracker.LegacySoapStub/obj
