@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿    using Microsoft.AspNetCore.Mvc;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,71 +20,96 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
 {
     /// <summary>
     /// Ingests a single trade from an upstream source, enriches it via legacy SOAP reference data, 
-    /// and persists it securely inside SQL Server with strict concurrency safeguards.
+    /// and persists it securely inside SQL Server within an atomic database transaction.
+    /// Automatically rolls back all relational changes if a currency lookup, database constraint, 
+    /// or unhandled exception aborts the operational execution pipeline.
     /// </summary>
     /// <param name="dto">The trade ingestion data payload submitted from the upstream system.</param>
-    /// <returns>An IActionResult indicating the outcome of the transaction execution.</returns>
+    /// <returns>An IActionResult indicating the outcome of the transaction execution or the aborted state layout.</returns>
     [HttpPost("capture")]
     public async Task<IActionResult> CaptureTrade([FromBody] CreateTradeDto dto)
     {
-        // Concurrency handling and duplication check
-        bool exists = await db.Trades.AnyAsync(t => t.ExternalId == dto.external_id);
-        if (exists)
-        {
-            return Ok(new
-            {
-                status = "DuplicateIgnored",
-                message = $"Trade with External ID '{dto.external_id}' has already been sequentially captured and processed. Request safely ignored to ensure consistent, duplicate-free outcomes."
-            });
-        }
-
-        decimal conversionRate = await enrichmentService.GetExchangeRateToDocBaseAsync(dto.currency);
-        decimal computedNotionalBase = dto.quantity * dto.price * conversionRate;
-
-        var trade = new Trade
-        {
-            ExternalId = dto.external_id,
-            Account = dto.account,
-            Symbol = dto.symbol,
-            Side = dto.side,
-            Quantity = dto.quantity,
-            Price = dto.price,
-            Currency = dto.currency,
-            BaseCurrencyRate = conversionRate,
-            NotionalBaseValue = computedNotionalBase,
-            BaseCurrency = configuration["WcfSettings:TargetBaseCurrency"]??"USD"
-        };
+        // Begin the explicit database transaction boundary
+        using var transaction = await db.Database.BeginTransactionAsync();
 
         try
         {
-            db.Trades.Add(trade);
-            await db.SaveChangesAsync();
-            return Ok(trade);
-        }
-        //Catch SPECIFIC unique index constraints (simultaneous double-submissions)
-        catch (DbUpdateException ex)
-            when (ex.InnerException is Microsoft.Data.SqlClient.SqlException sqlEx
-                  && (sqlEx.Number == 2601 || sqlEx.Number == 2627))
-        {
-            return Ok(new
+            // Concurrency handling and duplication check
+            bool exists = await db.Trades.AnyAsync(t => t.ExternalId == dto.external_id);
+            if (exists)
             {
-                status = "ConcurrencyInterception",
-                message = $"Simultaneous duplicate injection for Trade '{dto.external_id}' was successfully intercepted at the database relational level. State integrity and system consistency maintained."
-            });
-        }
-        //Catch ANY OTHER unexpected database failure 
-        catch (DbUpdateException generalDbEx)
-        {
-            return BadRequest(new
+                // Cancel transaction cleanly before exit
+                await transaction.RollbackAsync();
+
+                return Ok(new
+                {
+                    status = "DuplicateIgnored",
+                    message = $"Trade with External ID '{dto.external_id}' has already been sequentially captured and processed. Request safely ignored to ensure consistent, duplicate-free outcomes."
+                });
+            }
+
+            decimal conversionRate = await enrichmentService.GetExchangeRateToDocBaseAsync(dto.currency);
+            decimal computedNotionalBase = dto.quantity * dto.price * conversionRate;
+
+            var trade = new Trade
             {
-                status = "DatabaseError",
-                message = "An unexpected database state error occurred while committing the entity timeline.",
-                details = generalDbEx.Message
-            });
+                ExternalId = dto.external_id,
+                Account = dto.account,
+                Symbol = dto.symbol,
+                Side = dto.side,
+                Quantity = dto.quantity,
+                Price = dto.price,
+                Currency = dto.currency,
+                TradeTime = dto.trade_time,
+                BaseCurrencyRate = conversionRate,
+                NotionalBaseValue = computedNotionalBase,
+                BaseCurrency = configuration["WcfSettings:TargetBaseCurrency"] ?? "USD"
+            };
+
+            try
+            {
+                db.Trades.Add(trade);
+                await db.SaveChangesAsync();
+
+                // Commit changes permanently if saving to the database succeeds
+                await transaction.CommitAsync();
+
+                return Ok(trade);
+            }
+            //Catch SPECIFIC unique index constraints (simultaneous double-submissions)
+            catch (DbUpdateException ex)
+                when (ex.InnerException is Microsoft.Data.SqlClient.SqlException sqlEx
+                      && (sqlEx.Number == 2601 || sqlEx.Number == 2627))
+            {
+                // Rollback the transaction on an insertion concurrency collision
+                await transaction.RollbackAsync();
+
+                return Ok(new
+                {
+                    status = "ConcurrencyInterception",
+                    message = $"Simultaneous duplicate injection for Trade '{dto.external_id}' was successfully intercepted at the database relational level. State integrity and system consistency maintained."
+                });
+            }
+            //Catch ANY OTHER unexpected database failure 
+            catch (DbUpdateException generalDbEx)
+            {
+                // Rollback any staging operations on failure
+                await transaction.RollbackAsync();
+
+                return BadRequest(new
+                {
+                    status = "DatabaseError",
+                    message = "An unexpected database state error occurred while committing the entity timeline.",
+                    details = generalDbEx.Message
+                });
+            }
         }
         //Global Catch-All
         catch (Exception criticalEx)
         {
+            // Fallback Rollback: Catches any exception thrown inside the outer block (e.g., SOAP infrastructure drops)
+            await transaction.RollbackAsync();
+
             return BadRequest(new
             {
                 status = "CriticalSystemError",
@@ -92,7 +117,6 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
                 details = criticalEx.Message
             });
         }
-
     }
 
     /// <summary>
