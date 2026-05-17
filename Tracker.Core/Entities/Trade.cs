@@ -13,7 +13,7 @@ namespace Tracker.Core.Entities
         public decimal Price { get; set; }
         public DateTime TradeTime { get; set; }
         public string Currency { get; set; } = string.Empty; 
-        public string BaseCurrency { get; set; } = string.Empty;
+        public string BaseCurrency { get; set; } = "USD";
         public decimal BaseCurrencyRate { get; set; } 
         public decimal NotionalBaseValue { get; set; } 
     }

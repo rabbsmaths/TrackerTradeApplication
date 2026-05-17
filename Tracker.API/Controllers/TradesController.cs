@@ -46,6 +46,7 @@ public class TradesController(AppDbContext db, IEnrichmentService enrichmentServ
             Quantity = dto.quantity,
             Price = dto.price,
             Currency = dto.currency,
+            BaseCurrencyRate = conversionRate,
             NotionalBaseValue = computedNotionalBase,
             BaseCurrency = "USD"
         };
